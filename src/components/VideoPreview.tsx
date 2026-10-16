@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Play, Pause, SkipBack, Volume2, VolumeX, Captions, CaptionsOff, Film } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { secondsToClock, parseTimeToSeconds } from "@/lib/time";
+import { mediaUrl } from "@/lib/api";
 
 export default function VideoPreview() {
   const {
@@ -21,6 +22,7 @@ export default function VideoPreview() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastActiveId = useRef<string | null>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(1);
@@ -36,16 +38,35 @@ export default function VideoPreview() {
     video.volume = volume;
     if (volume === 0) video.muted = true;
     else if (!isOriginalAudioMuted) video.muted = false;
+
+    if (currentAudioRef.current) {
+      currentAudioRef.current.volume = volume;
+    }
   }, [volume, isOriginalAudioMuted]);
+
+  const stopCurrentAudio = () => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+    }
+  };
 
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) void video.play();
-    else video.pause();
+    if (video.paused) {
+      void video.play();
+    } else {
+      video.pause();
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+      }
+    }
   };
 
   const restart = () => {
+    stopCurrentAudio();
     const video = videoRef.current;
     if (video) video.currentTime = 0;
   };
@@ -63,6 +84,20 @@ export default function VideoPreview() {
     const activeId = active?.id ?? null;
     if (activeId !== lastActiveId.current) {
       lastActiveId.current = activeId;
+      stopCurrentAudio();
+
+      if (active && active.audioUrl && !video.paused) {
+        const audio = new Audio(mediaUrl(active.audioUrl));
+        audio.playbackRate = active.speed || 1;
+        const segmentOffset = Math.max(0, video.currentTime - parseTimeToSeconds(active.textStart));
+        if (segmentOffset > 0) {
+          audio.currentTime = segmentOffset;
+        }
+        audio.volume = volume;
+        void audio.play().catch(() => {});
+        currentAudioRef.current = audio;
+      }
+
       setSegments((prev) =>
         prev.map((segment) => ({
           ...segment,
@@ -73,6 +108,7 @@ export default function VideoPreview() {
   };
 
   const seek = (event: React.MouseEvent<HTMLDivElement>) => {
+    stopCurrentAudio();
     const video = videoRef.current;
     if (!video || videoDuration === 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -101,9 +137,15 @@ export default function VideoPreview() {
               className="w-full h-full object-contain"
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={(event) => setVideoDuration(event.currentTarget.duration)}
-              onEnded={() => setIsPlaying(false)}
+              onEnded={() => {
+                stopCurrentAudio();
+                setIsPlaying(false);
+              }}
               onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
+              onPause={() => {
+                stopCurrentAudio();
+                setIsPlaying(false);
+              }}
               onClick={togglePlay}
             />
             {showSubtitles && activeSegment && (

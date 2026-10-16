@@ -5,15 +5,14 @@ const UPLOAD_ENDPOINT = "https://generativelanguage.googleapis.com/upload/v1beta
 const API_ROOT = "https://generativelanguage.googleapis.com/v1beta";
 
 const TRANSCRIBE_PROMPT =
-  "transcribe for me in Khmer with the correct language and emotion from the video, " +
-  "and give me the start and end time of each speech as well. " +
-  "Return ONLY a JSON array of objects with keys: 'start', 'end', 'text' (Khmer string), " +
-  "'emotion', 'voice', and 'gender'. Do not use markdown blocks. " +
-  "and make sure it correct at the timestamp on the original video, for the time start and end " +
-  "format is like this: hh:mm:ss.s\n" +
+  "You are a professional movie/video dubbing translator. " +
+  "Listen carefully to all spoken dialogue in this video, understand the context, and translate the spoken dialogue into natural, fluent, and meaningful Khmer language (បកប្រែជាភាសាខ្មែរឱ្យមានន័យត្រឹមត្រូវ ពិរោះ និងងាយយល់). " +
+  "DO NOT transcribe phonetically or generate random nonsensical Khmer characters. The 'text' MUST be grammatically correct, natural Khmer sentences that make complete sense in context. " +
+  "Provide precise start and end timestamps for each speech segment matching the original audio timing. " +
+  "Return ONLY a raw JSON array of objects with keys: 'start', 'end', 'text' (natural Khmer translation string), " +
+  "'emotion', 'voice', and 'gender' ('Male' or 'Female'). Do not wrap in markdown blocks.\n" +
   "CRITICAL INSTRUCTION: You MUST strictly format timestamps as HH:MM:SS.sss (e.g. 00:02:49.120). " +
-  "Always include the 00 for hours if it is a short video. NEVER use a colon before milliseconds " +
-  "(wrong: 02:49:120, right: 00:02:49.120). Return ONLY a raw JSON array. No markdown.";
+  "Always include 00 for hours. Return ONLY a raw JSON array. No markdown.";
 
 export class TranscriptionError extends Error {
   constructor(
@@ -80,13 +79,13 @@ async function apiErrorMessage(response: Response, action: string): Promise<stri
 }
 
 const MODEL_FALLBACKS = [
-  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
+  "gemini-flash-latest",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
   "gemini-2.0-flash",
   "gemini-1.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.0-flash-lite",
-  "gemini-2.5-pro",
-  "gemini-1.5-pro",
 ];
 
 function buildModelCandidates(model: string): string[] {

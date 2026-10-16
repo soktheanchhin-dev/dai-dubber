@@ -8,3 +8,6 @@ electron/dist/
 .env
 .env.local
 next-env.d.ts
+tools/
+*.mp3
+*.exe

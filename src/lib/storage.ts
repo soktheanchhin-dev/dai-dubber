@@ -2,7 +2,7 @@ import type { AppSettings, ThemeColors } from "./types";
 
 export const DEFAULT_TEMP_PATH = "C:\\Temp\\AIDubber";
 export const DEFAULT_EXPORT_PATH = "C:\\Export\\AIDubber";
-export const DEFAULT_MODEL = "gemini-2.0-flash";
+export const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 
 export const DEFAULT_THEME_DARK: ThemeColors = {
   bgBase: "#0f1115",
