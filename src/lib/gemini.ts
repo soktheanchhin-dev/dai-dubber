@@ -88,17 +88,46 @@ const MODEL_FALLBACKS = [
   "gemini-1.5-flash",
 ];
 
+const MAX_TRANSIENT_RETRIES = 2;
+
 function buildModelCandidates(model: string): string[] {
   return [...new Set([model, ...MODEL_FALLBACKS.filter((candidate) => candidate !== model)])].filter(Boolean);
+}
+
+function isTransientServerError(error: unknown): error is TranscriptionError {
+  return error instanceof TranscriptionError && error.statusCode !== undefined && error.statusCode >= 500;
 }
 
 function isModelUnavailableError(error: unknown): boolean {
   if (!(error instanceof TranscriptionError)) return false;
   if (error.statusCode === 404 || error.statusCode === 400) {
     const message = error.message.toLowerCase();
-    return message.includes("model") && (message.includes("not available") || message.includes("not found") || message.includes("unsupported"));
+    return (
+      message.includes("model") &&
+      (message.includes("not available") ||
+        message.includes("no longer available") ||
+        message.includes("not found") ||
+        message.includes("unsupported"))
+    );
   }
   return false;
+}
+
+function waitBeforeRetry(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new TranscriptionCancelled());
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      reject(new TranscriptionCancelled());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function uploadFile(file: File, key: string, signal: AbortSignal): Promise<{ uri: string; name: string }> {
@@ -195,14 +224,21 @@ async function generateContent(
   let lastError: TranscriptionError | undefined;
 
   for (const candidateModel of buildModelCandidates(model)) {
-    try {
-      return await generateContentOnce(fileUri, mimeType, candidateModel, key, signal);
-    } catch (error) {
-      if (!(error instanceof TranscriptionError)) throw error;
-      lastError = error;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await generateContentOnce(fileUri, mimeType, candidateModel, key, signal);
+      } catch (error) {
+        if (!(error instanceof TranscriptionError)) throw error;
+        lastError = error;
 
-      if (!isModelUnavailableError(error)) {
-        throw error;
+        if (isTransientServerError(error) && attempt < MAX_TRANSIENT_RETRIES) {
+          await waitBeforeRetry(1000 * 2 ** attempt, signal);
+          continue;
+        }
+        if (!isModelUnavailableError(error)) {
+          throw error;
+        }
+        break;
       }
     }
   }

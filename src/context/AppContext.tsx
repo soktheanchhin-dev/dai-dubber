@@ -528,7 +528,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setSegmentsState((prev) =>
             prev.map((item, i) => (i === index ? { ...item, audioStatus: "idle" } : item)),
           );
-          return { success: false, fatal: false };
+          return { success: false, fatal: true, error: response.error || "Audio generation failed." };
         }
 
         const url = `${response.url}&t=${Date.now()}`;
@@ -555,11 +555,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ),
         );
         return { success: true, fatal: false };
-      } catch {
+      } catch (error) {
         setSegmentsState((prev) =>
           prev.map((item, i) => (i === index ? { ...item, audioStatus: "idle" } : item)),
         );
-        return { success: false, fatal: true };
+        return {
+          success: false,
+          fatal: true,
+          error: error instanceof Error ? error.message : "Audio generation failed.",
+        };
       }
     };
 
@@ -567,8 +571,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (stopFlag.current || fatal) break;
       const batch = selected.slice(i, i + concurrency);
       const results = await Promise.all(batch.map((entry) => worker(entry)));
-      if (results.some((result) => result.fatal)) {
-        pushToast("Could not connect to the local backend server.", "error");
+      const failed = results.find((result) => result.fatal);
+      if (failed) {
+        pushToast(failed.error || "Audio generation failed.", "error");
         fatal = true;
       }
     }

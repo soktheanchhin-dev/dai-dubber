@@ -26,7 +26,7 @@ A complete rebuild of the original Vite + Electron + Python application using:
 
 ## Prerequisites
 - **Node.js ≥ 20** (tested on v24.13)
-- **Python 3.11+** with `edge-tts` (`pip install edge-tts==7.2.8`)
+- **Python 3.11+** with `edge-tts` (`pip install edge-tts==7.3.1`)
 - **FFmpeg** + **FFprobe** on PATH (or place in `tools/ffmpeg.exe`, `tools/ffprobe.exe`)
 
 The original distribution already includes `tools/` with:

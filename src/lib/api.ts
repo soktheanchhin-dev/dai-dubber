@@ -15,10 +15,22 @@ export async function generateAudio(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
   });
-  if (!response.ok) {
-    return { success: false, error: `Server responded with ${response.status}` };
+
+  const body = await response.text();
+  let result: GenerateAudioResponse;
+  try {
+    result = JSON.parse(body) as GenerateAudioResponse;
+  } catch {
+    return {
+      success: false,
+      error: body || `Audio generation failed (HTTP ${response.status}).`,
+    };
   }
-  return (await response.json()) as GenerateAudioResponse;
+
+  if (!response.ok && result.success) {
+    return { success: false, error: result.error || `Audio generation failed (HTTP ${response.status}).` };
+  }
+  return result;
 }
 
 export async function openFolder(folderPath: string): Promise<void> {

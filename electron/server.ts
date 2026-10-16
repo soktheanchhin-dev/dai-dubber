@@ -53,6 +53,7 @@ export function createServer(outDir: string): Express {
 
   const defaultAudioDir = path.join(os.tmpdir(), "dai-dubber-audio");
   fs.mkdirSync(defaultAudioDir, { recursive: true });
+  const generatedAudioFiles = new Map<string, string>();
 
   const uploadsDir = path.join(os.tmpdir(), "dai-dubber-uploads");
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -126,6 +127,7 @@ export function createServer(outDir: string): Express {
 
     child.on("close", (code) => {
       if (code === 0 && fs.existsSync(outputPath)) {
+        generatedAudioFiles.set(fileName, outputPath);
         res.json({ success: true, url: `/api/audio/${fileName}?v=1` });
       } else {
         res.status(500).json({ success: false, error: stderr || `Edge TTS exited with code ${code}` });
@@ -135,12 +137,10 @@ export function createServer(outDir: string): Express {
 
   app.get("/api/audio/:file", (req: Request, res: Response) => {
     const safe = path.basename(req.params.file);
-    const candidates = [path.join(defaultAudioDir, safe)];
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        res.sendFile(candidate);
-        return;
-      }
+    const audioPath = generatedAudioFiles.get(safe) ?? path.join(defaultAudioDir, safe);
+    if (fs.existsSync(audioPath)) {
+      res.sendFile(audioPath);
+      return;
     }
     res.status(404).send("Not found");
   });
@@ -204,13 +204,29 @@ export function createServer(outDir: string): Express {
       let inputIndex = 1;
 
       for (const track of payload.audioTracks || []) {
-        const filePath = resolveAudioFile(audioDir, track.file) ?? resolveAudioFile(defaultAudioDir, track.file);
-        if (!filePath) continue;
+        const fileName = path.basename(
+          track.file.split("?")[0].replace(/^.*\/api\/audio\//, "").replace(/^\/+/, ""),
+        );
+        const generatedPath = generatedAudioFiles.get(fileName);
+        const filePath =
+          (generatedPath && fs.existsSync(generatedPath) ? generatedPath : null) ??
+          resolveAudioFile(audioDir, track.file) ??
+          resolveAudioFile(defaultAudioDir, track.file);
+        if (!filePath) {
+          cleanup();
+          res.status(400).json({
+            success: false,
+            error: `Generated audio file is missing: ${fileName}. Regenerate the audio before rendering.`,
+          });
+          return;
+        }
         command.input(filePath);
         const idx = inputIndex++;
         const speed = Math.max(0.5, Math.min(2.5, track.speed || 1));
         const delay = Math.max(0, Math.round((track.start || 0) * 1000));
-        filters.push(`[${idx}:a]${atempoChain(speed)},adelay=${delay}:all=1[a${idx}]`);
+        filters.push(
+          `[${idx}:a]${atempoChain(speed)},asetpts=N/SR/TB,adelay=${delay}:all=1,asetpts=N/SR/TB[a${idx}]`,
+        );
         mixLabels.push(`[a${idx}]`);
       }
 
@@ -219,7 +235,9 @@ export function createServer(outDir: string): Express {
         const idx = inputIndex++;
         const delay = Math.max(0, Math.round((payload.bgmTrack.start || 0) * 1000));
         const volume = Math.max(0, Math.min(2, payload.bgmTrack.volume ?? 0.5));
-        filters.push(`[${idx}:a]volume=${volume.toFixed(2)},adelay=${delay}:all=1[bgm]`);
+        filters.push(
+          `[${idx}:a]volume=${volume.toFixed(2)},asetpts=N/SR/TB,adelay=${delay}:all=1,asetpts=N/SR/TB[bgm]`,
+        );
         mixLabels.push("[bgm]");
       }
 
@@ -263,11 +281,13 @@ export function createServer(outDir: string): Express {
       command
         .outputOptions(outputOptions)
         .on("start", (commandLine) => console.log("FFmpeg:", commandLine))
-        .on("error", (error) => {
-          console.error("Render error:", error.message);
+        .on("error", (error, _stdout, stderr) => {
+          const detail = stderr?.trim();
+          const message = detail ? `${error.message}\n${detail.slice(-4000)}` : error.message;
+          console.error("Render error:", message);
           cleanup();
           if (!res.headersSent) {
-            res.status(500).json({ success: false, error: error.message });
+            res.status(500).json({ success: false, error: message });
           }
         })
         .on("end", () => {
