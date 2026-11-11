@@ -8,11 +8,16 @@ const TRANSCRIBE_PROMPT =
   "You are a professional movie/video dubbing translator. " +
   "Listen carefully to all spoken dialogue in this video, understand the context, and translate the spoken dialogue into natural, fluent, and meaningful Khmer language (បកប្រែជាភាសាខ្មែរឱ្យមានន័យត្រឹមត្រូវ ពិរោះ និងងាយយល់). " +
   "DO NOT transcribe phonetically or generate random nonsensical Khmer characters. The 'text' MUST be grammatically correct, natural Khmer sentences that make complete sense in context. " +
+  "For every speech segment, identify whether the audible speaker sounds male or female and return that as 'gender'. Base this only on the voice, not the words or assumed character; keep the gender consistent when the same speaker returns. " +
   "Provide precise start and end timestamps for each speech segment matching the original audio timing. " +
   "Return ONLY a raw JSON array of objects with keys: 'start', 'end', 'text' (natural Khmer translation string), " +
   "'emotion', 'voice', and 'gender' ('Male' or 'Female'). Do not wrap in markdown blocks.\n" +
   "CRITICAL INSTRUCTION: You MUST strictly format timestamps as HH:MM:SS.sss (e.g. 00:02:49.120). " +
   "Always include 00 for hours. Return ONLY a raw JSON array. No markdown.";
+
+function buildTranscribePrompt(videoDuration: number): string {
+  return `${TRANSCRIBE_PROMPT}\nThe video duration is ${videoDuration.toFixed(2)} seconds. Every start and end timestamp must be within this video, from 00:00:00.000 to ${videoDuration.toFixed(3)} seconds.`;
+}
 
 export class TranscriptionError extends Error {
   constructor(
@@ -51,6 +56,7 @@ interface RawGeminiItem {
   khmer_text?: string;
   content?: string;
   transcription?: string;
+  gender?: string;
 }
 
 function pick(raw: RawGeminiItem, keys: (keyof RawGeminiItem)[]): string | number | undefined {
@@ -172,6 +178,7 @@ async function generateContentOnce(
   mimeType: string,
   model: string,
   key: string,
+  videoDuration: number,
   signal: AbortSignal,
 ): Promise<RawGeminiItem[]> {
   const response = await fetch(`${API_ROOT}/models/${model}:generateContent?key=${key}`, {
@@ -180,7 +187,7 @@ async function generateContentOnce(
     body: JSON.stringify({
       contents: [
         {
-          parts: [{ text: TRANSCRIBE_PROMPT }, { fileData: { mimeType, fileUri } }],
+          parts: [{ text: buildTranscribePrompt(videoDuration) }, { fileData: { mimeType, fileUri } }],
         },
       ],
       generationConfig: { responseMimeType: "application/json" },
@@ -219,6 +226,7 @@ async function generateContent(
   mimeType: string,
   model: string,
   key: string,
+  videoDuration: number,
   signal: AbortSignal,
 ): Promise<RawGeminiItem[]> {
   let lastError: TranscriptionError | undefined;
@@ -226,7 +234,7 @@ async function generateContent(
   for (const candidateModel of buildModelCandidates(model)) {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await generateContentOnce(fileUri, mimeType, candidateModel, key, signal);
+        return await generateContentOnce(fileUri, mimeType, candidateModel, key, videoDuration, signal);
       } catch (error) {
         if (!(error instanceof TranscriptionError)) throw error;
         lastError = error;
@@ -251,6 +259,8 @@ function normalizeItems(items: RawGeminiItem[], videoDuration: number): Subtitle
     const rawStart = pick(item, ["start", "startTime", "start_time"]) ?? 0;
     const rawEnd = pick(item, ["end", "endTime", "end_time"]) ?? 0;
     const text = String(pick(item, ["text", "text_khmer", "khmer_text", "content", "transcription"]) ?? "");
+    const reportedGender = item.gender?.trim().toLowerCase();
+    const gender = reportedGender === "male" ? "Male" : "Female";
 
     let start = parseFloat(parseTimeToSeconds(rawStart).toFixed(2));
     let end = parseFloat(parseTimeToSeconds(rawEnd).toFixed(2));
@@ -259,9 +269,17 @@ function normalizeItems(items: RawGeminiItem[], videoDuration: number): Subtitle
     if (end <= start) end = parseFloat((start + 0.5).toFixed(2));
 
     if (videoDuration > 0) {
-      if (start > videoDuration) start = parseFloat((videoDuration - 0.5).toFixed(2));
+      if (start >= videoDuration) {
+        throw new TranscriptionError(
+          `Gemini returned a subtitle start time outside the ${videoDuration.toFixed(2)}-second video. Please transcribe again.`,
+        );
+      }
       if (end > videoDuration) end = parseFloat(videoDuration.toFixed(2));
-      if (start < 0) start = 0;
+      if (end <= start) {
+        throw new TranscriptionError(
+          `Gemini returned invalid subtitle timing for a ${videoDuration.toFixed(2)}-second video. Please transcribe again.`,
+        );
+      }
     }
 
     return {
@@ -272,7 +290,7 @@ function normalizeItems(items: RawGeminiItem[], videoDuration: number): Subtitle
       audioEnd: String(end),
       text,
       voice: "KH Khmer",
-      gender: "Female",
+      gender,
       status: "pending",
       audioStatus: "idle",
       audioUrl: null,
@@ -305,7 +323,7 @@ export async function transcribeVideo(options: TranscribeOptions): Promise<Subti
     try {
       const { uri, name } = await uploadFile(videoFile, key, signal);
       await waitForProcessing(name, key, signal);
-      const items = await generateContent(uri, videoFile.type || "video/mp4", model, key, signal);
+      const items = await generateContent(uri, videoFile.type || "video/mp4", model, key, videoDuration, signal);
       return normalizeItems(items, videoDuration);
     } catch (error) {
       if (error instanceof TranscriptionCancelled || (error instanceof DOMException && error.name === "AbortError")) {

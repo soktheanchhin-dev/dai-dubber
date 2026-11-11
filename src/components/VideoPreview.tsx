@@ -22,6 +22,7 @@ export default function VideoPreview() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastActiveId = useRef<string | null>(null);
+  const lastAudioId = useRef<string | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -84,12 +85,32 @@ export default function VideoPreview() {
     const activeId = active?.id ?? null;
     if (activeId !== lastActiveId.current) {
       lastActiveId.current = activeId;
+      setSegments((prev) =>
+        prev.map((segment) => ({
+          ...segment,
+          status: segment.id === activeId ? "active" : segment.status === "active" ? "pending" : segment.status,
+        })),
+      );
+    }
+
+    const activeAudio = segments.find(
+      (segment) =>
+        segment.audioUrl &&
+        video.currentTime >= parseTimeToSeconds(segment.audioStart) &&
+        video.currentTime < parseTimeToSeconds(segment.audioEnd),
+    );
+    const activeAudioId = activeAudio?.id ?? null;
+    if (activeAudioId !== lastAudioId.current) {
+      lastAudioId.current = activeAudioId;
       stopCurrentAudio();
 
-      if (active && active.audioUrl && !video.paused) {
-        const audio = new Audio(mediaUrl(active.audioUrl));
-        audio.playbackRate = active.speed || 1;
-        const segmentOffset = Math.max(0, video.currentTime - parseTimeToSeconds(active.textStart));
+      if (activeAudio?.audioUrl && !video.paused) {
+        const audio = new Audio(mediaUrl(activeAudio.audioUrl));
+        audio.playbackRate = activeAudio.speed || 1;
+        const segmentOffset = Math.max(
+          0,
+          (video.currentTime - parseTimeToSeconds(activeAudio.audioStart)) * (activeAudio.speed || 1),
+        );
         if (segmentOffset > 0) {
           audio.currentTime = segmentOffset;
         }
@@ -97,13 +118,6 @@ export default function VideoPreview() {
         void audio.play().catch(() => {});
         currentAudioRef.current = audio;
       }
-
-      setSegments((prev) =>
-        prev.map((segment) => ({
-          ...segment,
-          status: segment.id === activeId ? "active" : segment.status === "active" ? "pending" : segment.status,
-        })),
-      );
     }
   };
 
@@ -141,7 +155,10 @@ export default function VideoPreview() {
                 stopCurrentAudio();
                 setIsPlaying(false);
               }}
-              onPlay={() => setIsPlaying(true)}
+              onPlay={() => {
+                lastAudioId.current = null;
+                setIsPlaying(true);
+              }}
               onPause={() => {
                 stopCurrentAudio();
                 setIsPlaying(false);

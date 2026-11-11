@@ -595,7 +595,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           audio = new Audio(mediaUrl(segment.audioUrl));
           audioCache.current[segment.id] = audio;
         }
-        audio.playbackRate = segment.speed || 1;
+        audio.playbackRate = 1;
         void audio.play();
         return;
       }
